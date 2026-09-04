@@ -1,0 +1,31 @@
+name: buildbot preflight (android)
+on: [push, workflow_dispatch]
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [armeabi-v7a, arm64-v8a, x86, x86_64]
+    env:
+      API_LEVEL: 24
+      CXXFLAGS: -Wno-deprecated-declarations -Wno-unknown-attributes
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build (replays the android-cmake template)
+        run: |
+          export NDK_ROOT=$ANDROID_NDK_LATEST_HOME
+          cmake -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_LIBRETRO=ON -DENABLE_NETWORKING=OFF -G Ninja \
+            -DANDROID_PLATFORM=android-$API_LEVEL \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake \
+            -DANDROID_STL=c++_static -DANDROID_ABI=${{ matrix.abi }} \
+            . -Bbuild/android-${{ matrix.abi }}
+          cmake --build build/android-${{ matrix.abi }} --target applewin_libretro --config Release -- -j$(nproc)
+      - name: Check
+        run: |
+          f=$(find build/android-${{ matrix.abi }} -name "applewin_libretro.so" | head -1)
+          ls -l "$f"; file "$f"
