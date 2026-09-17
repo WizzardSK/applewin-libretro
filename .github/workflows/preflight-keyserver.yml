@@ -30,7 +30,7 @@ jobs:
       # The buildbot's own registry is not reachable from here ("Get
       # https://git.libretro.com:5050/v2/: context deadline exceeded"), so this
       # runs against the image's base instead - libretro-build-amd64-ubuntu is
-      # FROM ubuntu:bionic, and installs curl, sudo and gnupg, which is all the
+      # FROM ubuntu:bionic and installs curl, sudo and gnupg, which is all the
       # changed line needs.
       - name: Fetch the key and let apt use it
         run: |
@@ -41,14 +41,19 @@ jobs:
 
             # The line from .gitlab-ci.yml, minus the sudo the buildbot needs.
             curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x16FAAD7AF99A65E2" \
-              | gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg
+              | gpg --dearmor -o /etc/apt/trusted.gpg.d/kitware-archive.gpg
 
-            # bionic ships gpg 2.2.4, which has no --show-keys; apt-key can still
-            # read a keyring, and the real proof is the apt run below anyway.
-            apt-key --keyring /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg list 2>/dev/null | head -5
-            echo "deb https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu bionic main" \
-              > /etc/apt/sources.list.d/toolchain.list
+            # 16FAAD7AF99A65E2 is Kitware, so the repository to prove it against
+            # is theirs. No "!" in front of the grep: set -e ignores the exit
+            # status of a ! command, which is how the first version of this test
+            # passed while apt was reporting NO_PUBKEY.
+            echo "deb https://apt.kitware.com/ubuntu/ bionic main" \
+              > /etc/apt/sources.list.d/kitware.list
             apt-get update -qy 2>&1 | tee /tmp/update.log
-            ! grep -i "NO_PUBKEY\|not signed\|GPG error" /tmp/update.log
-            apt-cache policy gcc-11 | head -3
+            if grep -i "NO_PUBKEY\|not signed\|GPG error" /tmp/update.log; then
+              echo "apt did not accept the key"
+              exit 1
+            fi
+            apt-cache policy cmake | head -3
+            apt-cache policy cmake | grep -q apt.kitware.com
           '
