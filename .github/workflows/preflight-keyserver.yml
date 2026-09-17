@@ -23,21 +23,31 @@ jobs:
           assert not any('apt-key' in s for s in steps)
           PY
 
-  in-the-buildbot-image:
+  key-fetch-end-to-end:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: The job's before_script, in the image the job uses
+      # The buildbot's own registry is not reachable from here ("Get
+      # https://git.libretro.com:5050/v2/: context deadline exceeded"), so this
+      # runs against the image's base instead - libretro-build-amd64-ubuntu is
+      # FROM ubuntu:bionic, and installs curl, sudo and gnupg, which is all the
+      # changed line needs.
+      - name: Fetch the key and let apt use it
         run: |
-          docker run --rm -v "$PWD":/src -w /src \
-            git.libretro.com:5050/libretro-infrastructure/libretro-build-amd64-ubuntu:backports \
-            bash -c '
-              set -eux
-              # The buildbot runs these as a user with sudo; here we are already root.
-              curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x16FAAD7AF99A65E2" \
-                | gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg
-              apt-get update -qy
-              apt-get -qy install $(cat source/frontends/libretro/xenial/packages.txt)
-              apt-key list 2>/dev/null | grep -i toolchain || true
-              /usr/bin/gcc-14 --version | head -1
-            '
+          docker run --rm ubuntu:bionic bash -c '
+            set -eux
+            apt-get update -qy
+            apt-get install -qy curl gnupg ca-certificates > /dev/null
+
+            # The line from .gitlab-ci.yml, minus the sudo the buildbot needs.
+            curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x16FAAD7AF99A65E2" \
+              | gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg
+
+            # It has to be the right key, and apt has to accept the PPA with it.
+            gpg --show-keys --with-colons /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg | grep -i 16FAAD7AF99A65E2
+            echo "deb https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu bionic main" \
+              > /etc/apt/sources.list.d/toolchain.list
+            apt-get update -qy 2>&1 | tee /tmp/update.log
+            ! grep -i "NO_PUBKEY\|not signed\|GPG error" /tmp/update.log
+            apt-cache policy gcc-11 | head -3
+          '
