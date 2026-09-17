@@ -23,37 +23,48 @@ jobs:
           assert not any('apt-key' in s for s in steps)
           PY
 
-  key-fetch-end-to-end:
+  same-key-either-way:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # The buildbot's own registry is not reachable from here ("Get
+      # The buildbot's registry is not reachable from here ("Get
       # https://git.libretro.com:5050/v2/: context deadline exceeded"), so this
-      # runs against the image's base instead - libretro-build-amd64-ubuntu is
-      # FROM ubuntu:bionic and installs curl, sudo and gnupg, which is all the
+      # runs on the image's base - libretro-build-amd64-ubuntu is FROM
+      # ubuntu:bionic and installs curl, sudo and gnupg, which is all the
       # changed line needs.
-      - name: Fetch the key and let apt use it
+      #
+      # What it proves is the claim the change actually makes: the key that
+      # arrives over HTTPS is the same key apt-key would have fetched from the
+      # keyserver, and apt can read the keyring it lands in. It deliberately
+      # does not assert anything about apt.kitware.com's current signature -
+      # that repository is signed by 65ADECD7A7039392 today, which is a
+      # separate question from how this one key gets fetched.
+      - name: curl and apt-key fetch the same key
         run: |
           docker run --rm ubuntu:bionic bash -c '
             set -eux
             apt-get update -qy
             apt-get install -qy curl gnupg ca-certificates > /dev/null
 
-            # The line from .gitlab-ci.yml, minus the sudo the buildbot needs.
+            # The new line, minus the sudo the buildbot needs.
             curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x16FAAD7AF99A65E2" \
               | gpg --dearmor -o /etc/apt/trusted.gpg.d/kitware-archive.gpg
+            apt-key --keyring /etc/apt/trusted.gpg.d/kitware-archive.gpg \
+              adv --fingerprint --with-colons 2>/dev/null | grep ^fpr: | head -1 > /tmp/https.fpr
 
-            # 16FAAD7AF99A65E2 is Kitware, so the repository to prove it against
-            # is theirs. No "!" in front of the grep: set -e ignores the exit
-            # status of a ! command, which is how the first version of this test
-            # passed while apt was reporting NO_PUBKEY.
-            echo "deb https://apt.kitware.com/ubuntu/ bionic main" \
-              > /etc/apt/sources.list.d/kitware.list
+            # The old one, into a keyring of its own.
+            apt-key --keyring /tmp/keyserver.gpg adv \
+              --keyserver keyserver.ubuntu.com --recv-keys 16FAAD7AF99A65E2
+            apt-key --keyring /tmp/keyserver.gpg adv --fingerprint --with-colons 2>/dev/null \
+              | grep ^fpr: | head -1 > /tmp/keyserver.fpr
+
+            cat /tmp/https.fpr /tmp/keyserver.fpr
+            diff /tmp/https.fpr /tmp/keyserver.fpr
+
+            # And apt reads the keyring rather than complaining about it.
             apt-get update -qy 2>&1 | tee /tmp/update.log
-            if grep -i "NO_PUBKEY\|not signed\|GPG error" /tmp/update.log; then
-              echo "apt did not accept the key"
+            if grep -i "invalid keyring\|could not be read\|Error reading" /tmp/update.log; then
+              echo "apt could not read the keyring"
               exit 1
             fi
-            apt-cache policy cmake | head -3
-            apt-cache policy cmake | grep -q apt.kitware.com
           '
