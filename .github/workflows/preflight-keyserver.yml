@@ -1,0 +1,43 @@
+# Temporary: proves the .gitlab-ci.yml change works inside the very image the
+# buildbot job uses. Lives on this branch only, never on the one that is
+# proposed upstream.
+name: Preflight keyserver fix
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  gitlab-ci-parses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 - <<'PY'
+          import yaml
+          d = yaml.safe_load(open('.gitlab-ci.yml'))
+          steps = d['libretro-build-linux-x64']['before_script']
+          for s in steps:
+              print(repr(s))
+          assert any('keyserver.ubuntu.com/pks/lookup' in s for s in steps)
+          assert not any('apt-key' in s for s in steps)
+          PY
+
+  in-the-buildbot-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The job's before_script, in the image the job uses
+        run: |
+          docker run --rm -v "$PWD":/src -w /src \
+            git.libretro.com:5050/libretro-infrastructure/libretro-build-amd64-ubuntu:backports \
+            bash -c '
+              set -eux
+              # The buildbot runs these as a user with sudo; here we are already root.
+              curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x16FAAD7AF99A65E2" \
+                | gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg
+              apt-get update -qy
+              apt-get -qy install $(cat source/frontends/libretro/xenial/packages.txt)
+              apt-key list 2>/dev/null | grep -i toolchain || true
+              /usr/bin/gcc-14 --version | head -1
+            '
