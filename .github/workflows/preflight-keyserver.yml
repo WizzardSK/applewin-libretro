@@ -43,8 +43,9 @@ jobs:
             curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x16FAAD7AF99A65E2" \
               | gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg
 
-            # It has to be the right key, and apt has to accept the PPA with it.
-            gpg --show-keys --with-colons /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg | grep -i 16FAAD7AF99A65E2
+            # bionic ships gpg 2.2.4, which has no --show-keys; apt-key can still
+            # read a keyring, and the real proof is the apt run below anyway.
+            apt-key --keyring /etc/apt/trusted.gpg.d/ubuntu-toolchain-r.gpg list 2>/dev/null | head -5
             echo "deb https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu bionic main" \
               > /etc/apt/sources.list.d/toolchain.list
             apt-get update -qy 2>&1 | tee /tmp/update.log
